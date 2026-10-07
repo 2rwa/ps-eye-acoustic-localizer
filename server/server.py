@@ -7,7 +7,7 @@ import ipaddress
 import json
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import ps_eye_stream
 
@@ -54,6 +54,27 @@ class Handler(SimpleHTTPRequestHandler):
             return
 
         super().do_GET()
+
+    def do_POST(self) -> None:
+        parsed = urlsplit(self.path)
+        if parsed.path != "/api/ps-eye/reset":
+            self.send_error(404)
+            return
+        if not self.local_network_request():
+            self.send_error(403)
+            return
+        if self.headers.get("X-PS-Eye-Reset") != "1":
+            self.send_error(403, "reset confirmation header required")
+            return
+        params = parse_qs(parsed.query)
+        array = params.get("array", ["both"])[0].lower()
+        if array not in {"a", "b", "both"}:
+            self.send_error(400, "array must be a, b, or both")
+            return
+        try:
+            self.send_json(ps_eye_stream.restart(array))
+        except (OSError, RuntimeError, ValueError) as exc:
+            self.send_json({"ok": False, "error": str(exc)}, status=500)
 
 
 class Server(ThreadingHTTPServer):
