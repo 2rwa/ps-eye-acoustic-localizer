@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dual PS Eye 2D Sound Locator</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:#101010;color:#eee}
+main{max-width:1180px;margin:auto;padding:18px}
+h1{font-size:1.45rem;margin:0 0 6px}
+.sub{color:#aaa;font-size:.88rem;margin-bottom:14px}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.card{border:1px solid #333;border-radius:12px;background:#1a1a1a;padding:14px}
+.angle{font-size:2.2rem;font-variant-numeric:tabular-nums;font-weight:700}
+.meta{display:flex;gap:12px;flex-wrap:wrap;color:#bbb;font-size:.85rem}
+.good{color:#bfe89a}.warn{color:#ffd27a}.bad{color:#ff9b9b}
+.loc{margin-top:14px;border:1px solid #333;border-radius:12px;background:#181818;padding:14px}
+.locTop{display:flex;gap:18px;align-items:baseline;flex-wrap:wrap}
+.xy{font-size:1.7rem;font-variant-numeric:tabular-nums;font-weight:700}
+canvas{display:block;width:100%;height:auto;max-height:620px;background:#0b0b0b;border-radius:8px;margin-top:12px}
+.controls{display:grid;grid-template-columns:repeat(3,minmax(180px,1fr));gap:10px;margin-top:14px}
+.control{background:#181818;border:1px solid #333;border-radius:8px;padding:10px}
+.control label{display:block;font-size:.82rem;color:#bbb}
+.control input[type=range]{width:100%}
+.control .v{font-variant-numeric:tabular-nums;color:#fff}
+.note{font-size:.8rem;color:#999;margin-top:10px;line-height:1.5}
+#log{white-space:pre-wrap;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#999;margin-top:10px}
+@media(max-width:760px){.cards{grid-template-columns:1fr}.controls{grid-template-columns:1fr}.angle{font-size:1.8rem}}
+</style>
+</head>
+<body>
+<main>
+<h1>Dual PS Eye 2D Sound Locator</h1>
+<div style="margin:0 0 10px"><a href="../compare/" style="color:#9dd">Current / SRP-PHAT 比較 →</a> / <a href="../calibrator/" style="color:#9dd">Calibration Sound Source →</a></div>
+<div class="sub">2台それぞれの4ch GCC-PHAT方位をブラウザで推定し、方位線の交点から発音位置を求めます。</div>
+
+<div class="cards">
+  <section class="card">
+    <strong>Array A — B4.09.24.1</strong>
+    <div><span class="angle" id="aAngle">---</span> <span id="aState">接続中...</span></div>
+    <div class="meta"><span>WS <b id="aWs">---</b></span><span>信頼度 <b id="aConf">0%</b></span><span>Level <b id="aLevel">---</b></span><span>frames <b id="aFrames">0</b></span><span>処理 <b id="aProc">---</b></span><span>更新 <b id="aHz">---</b></span><span>packet <b id="aPkt">---</b></span><span>slow <b id="aSlow">0</b></span></div>
+  </section>
+  <section class="card">
+    <strong>Array B — B3.04.06.1</strong>
+    <div><span class="angle" id="bAngle">---</span> <span id="bState">接続中...</span></div>
+    <div class="meta"><span>WS <b id="bWs">---</b></span><span>信頼度 <b id="bConf">0%</b></span><span>Level <b id="bLevel">---</b></span><span>frames <b id="bFrames">0</b></span><span>処理 <b id="bProc">---</b></span><span>更新 <b id="bHz">---</b></span><span>packet <b id="bPkt">---</b></span><span>slow <b id="bSlow">0</b></span></div>
+  </section>
+</div>
+
+<section class="loc">
+  <div class="locTop">
+    <strong>推定発音位置</strong>
+    <span class="xy" id="xy">---</span>
+    <span>交差信頼度 <b id="locConf">0%</b></span>
+    <span id="locState">待機中</span>
+  </div>
+  <canvas id="map" width="1000" height="620"></canvas>
+  <div class="note">図の上方向が基準正面、右が +X。Arrayの太線が本体、細い線が推定方位です。直線アレイ単体には前後曖昧性があるため、両方の「前方半面」に音源がある配置を前提にしています。<br>性能目安: 処理が16 msを頻繁に超える、packetが8 msから大きく外れる、更新が約62.5 Hzより大幅に低い場合はブラウザ処理落ちの可能性があります。</div>
+</section>
+
+<div class="controls">
+  <div class="control"><label>Array B X位置 <span class="v" id="bXv">50 cm</span></label><input id="bX" type="range" min="-100" max="100" value="50" step="1"></div>
+  <div class="control"><label>Array B Y位置 <span class="v" id="bYv">0 cm</span></label><input id="bY" type="range" min="-100" max="100" value="0" step="1"></div>
+  <div class="control"><label>Array B 正面方向 <span class="v" id="bHv">-18°</span></label><input id="bH" type="range" min="-180" max="180" value="-18" step="1"></div>
+  <div class="control"><label>Array A 正面方向 <span class="v" id="aHv">18°</span></label><input id="aH" type="range" min="-180" max="180" value="18" step="1"></div>
+  <div class="control"><label>音量ゲート <span class="v" id="gateV">-52 dBFS</span></label><input id="gate" type="range" min="-70" max="-25" value="-52" step="1"></div>
+  <div class="control"><label>表示範囲 <span class="v" id="scaleV">200 cm</span></label><input id="scale" type="range" min="100" max="500" value="200" step="10"></div>
+</div>
+
+<div id="log"></div>
+</main>
+<script src="../ps-eye-doa-factory.js"></script>
+<script>
+'use strict';
+const A=PsEyeDoaFactory.createEstimator(), B=PsEyeDoaFactory.createEstimator();
+const $=id=>document.getElementById(id);
+const canvas=$('map'),ctx=canvas.getContext('2d');
+let lastA=null,lastB=null,lastAT=0,lastBT=0,framesA=0,framesB=0,smoothPos=null;
+const perfState={
+  A:{procAvg:0,procMax:0,lastPacket:0,pktAvg:0,slow:0,updates:0,hzAt:performance.now(),hz:0},
+  B:{procAvg:0,procMax:0,lastPacket:0,pktAvg:0,slow:0,updates:0,hzAt:performance.now(),hz:0}
+};
+
+const geom={ax:0,ay:0,ah:18,bx:.50,by:0,bh:-18,scale:2};
+function deg(v){return v*Math.PI/180}
+function cross(a,b){return a.x*b.y-a.y*b.x}
+function dir(globalDeg){const r=deg(globalDeg);return{x:Math.sin(r),y:Math.cos(r)}}
+function intersect(a,b){
+  const p={x:geom.ax,y:geom.ay},q={x:geom.bx,y:geom.by};
+  const d1=dir(geom.ah+a),d2=dir(geom.bh+b);
+  const qp={x:q.x-p.x,y:q.y-p.y},den=cross(d1,d2);
+  if(Math.abs(den)<.08)return{valid:false,reason:'方位線がほぼ平行',den};
+  const t=cross(qp,d2)/den,u=cross(qp,d1)/den;
+  const x=p.x+t*d1.x,y=p.y+t*d1.y;
+  const separation=Math.abs(den);
+  return{valid:t>0&&u>0&&Math.hypot(x-p.x,y-p.y)<8&&Math.hypot(x-q.x,y-q.y)<8,
+    reason:t<=0||u<=0?'交点が片方の背面':'',x,y,t,u,separation};
+}
+function angleText(r){return r&&r.active?(r.angle>=0?'+':'')+r.angle.toFixed(1)+'°':'---'}
+function updatePerf(which,procMs,hadResult){
+  const p=perfState[which],now=performance.now();
+  p.procAvg=p.procAvg? p.procAvg*.88+procMs*.12 : procMs;
+  p.procMax=Math.max(p.procMax*.995,procMs);
+  if(procMs>16)p.slow++;
+  if(p.lastPacket){
+    const dt=now-p.lastPacket;
+    p.pktAvg=p.pktAvg? p.pktAvg*.9+dt*.1 : dt;
+  }
+  p.lastPacket=now;
+  if(hadResult)p.updates++;
+  if(now-p.hzAt>=1000){
+    p.hz=p.updates*1000/(now-p.hzAt);
+    p.updates=0;p.hzAt=now;
+  }
+  const pre=which.toLowerCase();
+  $(pre+'Proc').textContent=p.procAvg.toFixed(1)+' ms';
+  $(pre+'Hz').textContent=p.hz.toFixed(1)+' Hz';
+  $(pre+'Pkt').textContent=(p.pktAvg||0).toFixed(1)+' ms';
+  $(pre+'Slow').textContent=String(p.slow);
+}
+function updateArray(prefix,r,frames){
+  $(prefix+'Angle').textContent=angleText(r);
+  $(prefix+'Conf').textContent=r&&r.active?Math.round(r.confidence*100)+'%':'0%';
+  $(prefix+'Level').textContent=r? r.levelDb.toFixed(1)+' dBFS':'---';
+  $(prefix+'Frames').textContent=frames.toLocaleString();
+  const st=$(prefix+'State');
+  if(!r)st.textContent='解析待ち';
+  else if(!r.active)st.textContent='音量不足';
+  else if(r.confidence>.55)st.textContent='追跡中';
+  else st.textContent='不安定';
+}
+function locate(){
+  if(!lastA||!lastB||!lastA.active||!lastB.active)return{valid:false,reason:'両アレイの有効な方位待ち'};
+  if(performance.now()-lastAT>350||performance.now()-lastBT>350)return{valid:false,reason:'方位更新待ち'};
+  const r=intersect(lastA.angle,lastB.angle);
+  const base=Math.sqrt(Math.max(0,lastA.confidence*lastB.confidence));
+  r.confidence=r.valid?base*Math.min(1,r.separation/.5):0;
+  if(r.valid){
+    if(!smoothPos)smoothPos={x:r.x,y:r.y};
+    const alpha=Math.max(.10,Math.min(.35,r.confidence*.4));
+    smoothPos.x=smoothPos.x*(1-alpha)+r.x*alpha;
+    smoothPos.y=smoothPos.y*(1-alpha)+r.y*alpha;
+    r.xSmooth=smoothPos.x;r.ySmooth=smoothPos.y;
+  }
+  return r;
+}
+function render(){
+  const loc=locate();
+  if(loc.valid){
+    $('xy').textContent='X '+(loc.xSmooth*100).toFixed(0)+' cm / Y '+(loc.ySmooth*100).toFixed(0)+' cm';
+    $('locConf').textContent=Math.round(loc.confidence*100)+'%';
+    $('locState').textContent=loc.confidence>.45?'測位中':'低信頼';
+  }else{
+    $('xy').textContent='---';$('locConf').textContent='0%';$('locState').textContent=loc.reason||'待機中';
+  }
+  draw(loc);
+}
+function worldToCanvas(x,y){
+  const range=geom.scale,margin=.08;
+  const minX=-range*.55,maxX=range*.55,minY=-range*.10,maxY=range*.95;
+  return{x:(x-minX)/(maxX-minX)*canvas.width,y:canvas.height-(y-minY)/(maxY-minY)*canvas.height};
+}
+function line(p,d,len){
+  const a=worldToCanvas(p.x,p.y),b=worldToCanvas(p.x+d.x*len,p.y+d.y*len);
+  ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+}
+function drawArray(x,y,h,label){
+  const c=worldToCanvas(x,y),r=deg(h),half=.06;
+  const vx=Math.cos(r)*half,vy=-Math.sin(r)*half;
+  const p1=worldToCanvas(x-vx,y-vy),p2=worldToCanvas(x+vx,y+vy);
+  ctx.lineWidth=6;ctx.strokeStyle='#ddd';ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
+  ctx.fillStyle='#ddd';ctx.font='18px system-ui';ctx.fillText(label,c.x+8,c.y-8);
+  ctx.lineWidth=1;ctx.strokeStyle='#777';line({x,y},dir(h),.18);
+}
+function draw(loc){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const range=geom.scale;
+  ctx.strokeStyle='#202020';ctx.lineWidth=1;
+  for(let x=-range;x<=range;x+=.25){const a=worldToCanvas(x,-range),b=worldToCanvas(x,range);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke()}
+  for(let y=-.25;y<=range;y+=.25){const a=worldToCanvas(-range,y),b=worldToCanvas(range,y);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke()}
+  drawArray(geom.ax,geom.ay,geom.ah,'A');drawArray(geom.bx,geom.by,geom.bh,'B');
+  if(lastA&&lastA.active){ctx.strokeStyle='#7dd';ctx.lineWidth=2;line({x:geom.ax,y:geom.ay},dir(geom.ah+lastA.angle),range*1.4)}
+  if(lastB&&lastB.active){ctx.strokeStyle='#fd8';ctx.lineWidth=2;line({x:geom.bx,y:geom.by},dir(geom.bh+lastB.angle),range*1.4)}
+  if(loc.valid){
+    const p=worldToCanvas(loc.xSmooth,loc.ySmooth);ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(p.x,p.y,9,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.beginPath();ctx.arc(p.x,p.y,18,0,Math.PI*2);ctx.stroke();
+  }
+}
+function parsePCM(buf){
+  if(buf.byteLength%8)return null;
+  const dv=new DataView(buf),pcm=new Int16Array(buf.byteLength/2);
+  for(let i=0;i<pcm.length;i++)pcm[i]=dv.getInt16(i*2,true);
+  return pcm;
+}
+function connectArray(which,path,estimator){
+  const ws=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+path);ws.binaryType='arraybuffer';
+  const wsEl=$(which.toLowerCase()+'Ws');wsEl.textContent='接続中';
+  ws.onopen=()=>wsEl.textContent='OK';
+  ws.onmessage=e=>{
+    if(typeof e.data==='string'){
+      try{const m=JSON.parse(e.data);if(m.type==='error'){$(which.toLowerCase()+'State').textContent='capture error';$('log').textContent=which+': '+m.error}}catch(_){}
+      return;
+    }
+    const pcm=parsePCM(e.data);if(!pcm)return;
+    const frames=pcm.length/4,t0=performance.now(),r=estimator.pushInt16(pcm),procMs=performance.now()-t0;
+    updatePerf(which,procMs,!!r);
+    if(which==='A'){framesA+=frames;if(r){lastA=r;lastAT=performance.now()}updateArray('a',lastA,framesA)}
+    else{framesB+=frames;if(r){lastB=r;lastBT=performance.now()}updateArray('b',lastB,framesB)}
+    render();
+  };
+  ws.onerror=()=>wsEl.textContent='error';
+  ws.onclose=()=>{wsEl.textContent='再接続';setTimeout(()=>connectArray(which,path,estimator),2000)};
+}
+function bind(id,key,scale=1,suffix=''){
+  const el=$(id),v=$(id+'v');
+  const update=()=>{geom[key]=Number(el.value)*scale;v.textContent=el.value+suffix;render()};
+  el.addEventListener('input',update);update();
+}
+bind('bX','bx',.01,' cm');bind('bY','by',.01,' cm');bind('bH','bh',1,'°');bind('aH','ah',1,'°');
+$('gate').addEventListener('input',()=>{$('gateV').textContent=$('gate').value+' dBFS';A.setGateDb($('gate').value);B.setGateDb($('gate').value)});
+A.setGateDb($('gate').value);B.setGateDb($('gate').value);
+$('scale').addEventListener('input',()=>{geom.scale=Number($('scale').value)/100;$('scaleV').textContent=$('scale').value+' cm';render()});
+geom.scale=Number($('scale').value)/100;
+
+function geometrySelfTest(){
+  const save={...geom};geom.ax=0;geom.ay=0;geom.ah=0;geom.bx=.5;geom.by=0;geom.bh=-45;
+  const target={x:.2,y:.7};
+  const bearing=(p,h)=>{const dx=target.x-p.x,dy=target.y-p.y;let g=Math.atan2(dx,dy)*180/Math.PI;let local=g-h;while(local>180)local-=360;while(local<-180)local+=360;return local};
+  const aa=bearing({x:0,y:0},0),bb=bearing({x:.5,y:0},-45),r=intersect(aa,bb);
+  Object.assign(geom,save);
+  const err=r.valid?Math.hypot(r.x-target.x,r.y-target.y):99;
+  return{pass:r.valid&&err<1e-6,angleA:aa,angleB:bb,error:err};
+}
+const gst=geometrySelfTest();document.documentElement.dataset.geometrySelftest=gst.pass?'pass':'fail';
+if(new URLSearchParams(location.search).has('selftest')){
+  $('log').textContent=JSON.stringify(gst,null,2);$('locState').textContent='self-test';render();
+}else{
+  connectArray('A','/ps-eye/a/ws',A);connectArray('B','/ps-eye/b/ws',B);render();
+}
+</script>
+</body>
+</html>

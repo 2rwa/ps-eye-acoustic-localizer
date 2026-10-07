@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111111">
+<title>PS Eye Calibration Sound Source</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:#101010;color:#eee;min-height:100dvh}
+main{max-width:720px;margin:auto;padding:18px 18px calc(24px + env(safe-area-inset-bottom))}
+h1{font-size:1.35rem;margin:0 0 6px}
+.sub{color:#aaa;font-size:.9rem;line-height:1.5;margin-bottom:16px}
+.status{background:#1b1b1b;border:1px solid #333;border-radius:14px;padding:16px;text-align:center;margin-bottom:14px}
+.state{font-size:1.7rem;font-weight:700}
+.flash{height:10px;border-radius:99px;background:#333;margin-top:12px;transition:background .04s}
+.flash.on{background:#fff}
+.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+.mode{border:1px solid #444;background:#191919;color:#eee;border-radius:12px;padding:14px 8px;font-size:.95rem}
+.mode.active{background:#eee;color:#111;border-color:#eee;font-weight:700}
+.big{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}
+.big button{min-height:72px;border:0;border-radius:14px;font-size:1.15rem;font-weight:700}
+#start{background:#e9e9e9;color:#111}
+#stop{background:#492020;color:#fff}
+.controls{display:grid;gap:10px}
+.control{background:#181818;border:1px solid #333;border-radius:10px;padding:12px}
+.control label{display:flex;justify-content:space-between;gap:12px;color:#bbb;font-size:.86rem}
+.control .v{color:#fff;font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;margin-top:9px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+select{font:inherit;background:#111;color:#eee;border:1px solid #444;border-radius:8px;padding:8px}
+.note{font-size:.82rem;color:#999;line-height:1.55;margin-top:14px}
+#diag{white-space:pre-wrap;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#888;margin-top:12px}
+@media(max-width:520px){.modes{grid-template-columns:1fr}.big{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body><main>
+<h1>PS Eye Calibration Sound Source</h1>
+<div class="sub">スマホを既知位置に置いて、2台PS Eyeの測位結果を合わせるための校正音源です。位置校正にはChirpかNoise Burst推奨、Sineはレベル確認向けです。</div>
+
+<section class="status">
+  <div class="state" id="state">停止中</div>
+  <div id="detail">---</div>
+  <div class="flash" id="flash"></div>
+</section>
+
+<div class="modes">
+  <button class="mode active" data-mode="chirp">Chirp<br><small>位置校正向け</small></button>
+  <button class="mode" data-mode="noise">Noise Burst<br><small>反射確認向け</small></button>
+  <button class="mode" data-mode="sine">Sine<br><small>レベル確認向け</small></button>
+</div>
+
+<div class="big">
+  <button id="start">5秒後に開始</button>
+  <button id="stop">停止</button>
+</div>
+
+<div class="controls">
+  <div class="control" id="freqBox">
+    <label>Sine周波数 <span class="v" id="freqV">1000 Hz</span></label>
+    <input id="freq" type="range" min="200" max="4000" step="10" value="1000">
+  </div>
+  <div class="control">
+    <label>出力レベル <span class="v" id="levelV">-12 dB</span></label>
+    <input id="level" type="range" min="-36" max="-3" step="1" value="-12">
+  </div>
+  <div class="control">
+    <label>Burst長 <span class="v" id="burstV">220 ms</span></label>
+    <input id="burst" type="range" min="80" max="600" step="10" value="220">
+  </div>
+  <div class="control">
+    <label>繰り返し間隔 <span class="v" id="periodV">1000 ms</span></label>
+    <input id="period" type="range" min="400" max="2500" step="50" value="1000">
+  </div>
+  <div class="control">
+    <label>開始ディレイ <span class="v" id="delayV">5 sec</span></label>
+    <input id="delay" type="range" min="0" max="10" step="1" value="5">
+  </div>
+  <div class="control row">
+    <label style="display:block">Chirp帯域</label>
+    <select id="chirpRange">
+      <option value="500,3500" selected>500 → 3500 Hz</option>
+      <option value="300,3000">300 → 3000 Hz</option>
+      <option value="800,4000">800 → 4000 Hz</option>
+    </select>
+  </div>
+</div>
+
+<div class="note">
+スマホ音量は最初50〜70%程度を推奨。スピーカー歪みや部屋の反射を避けるため最大音量にしない方が安定します。PS Eyeは16 kHz収録なので、4 kHz以下を中心にしています。<br>
+Chirp/Noise Burstは1秒程度ごとに短く鳴ります。Sineは連続音です。
+</div>
+<div id="diag"></div>
+</main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+let mode='chirp',ctx=null,master=null,running=false,startTimer=null,repeatTimer=null,currentNodes=[];
+let wakeLock=null;
+
+function gainValue(){return Math.pow(10,Number($('level').value)/20)}
+function setState(s,d=''){ $('state').textContent=s;$('detail').textContent=d }
+function setMode(m){
+  mode=m;
+  document.querySelectorAll('.mode').forEach(b=>b.classList.toggle('active',b.dataset.mode===m));
+  $('freqBox').style.opacity=m==='sine'?'1':'.45';
+  $('burst').disabled=m==='sine';
+  $('period').disabled=m==='sine';
+  $('chirpRange').disabled=m!=='chirp';
+  if(running){stopSound();beginNow()}
+}
+document.querySelectorAll('.mode').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.mode)));
+
+function bindRange(id,suffix){
+  const el=$(id),v=$(id+'V');const u=()=>v.textContent=el.value+' '+suffix;el.addEventListener('input',u);u();
+}
+bindRange('freq','Hz');bindRange('level','dB');bindRange('burst','ms');bindRange('period','ms');bindRange('delay','sec');
+
+async function ensureAudio(){
+  if(!ctx){
+    ctx=new (window.AudioContext||window.webkitAudioContext)();
+    master=ctx.createGain();master.connect(ctx.destination);
+  }
+  if(ctx.state!=='running')await ctx.resume();
+  $('diag').textContent='AudioContext: '+ctx.sampleRate+' Hz / '+ctx.state;
+}
+function envelope(g,t0,dur){
+  const g0=Math.max(.0001,gainValue());
+  g.gain.cancelScheduledValues(t0);
+  g.gain.setValueAtTime(.0001,t0);
+  g.gain.linearRampToValueAtTime(g0,t0+.015);
+  g.gain.setValueAtTime(g0,Math.max(t0+.016,t0+dur-.025));
+  g.gain.exponentialRampToValueAtTime(.0001,t0+dur);
+}
+function flash(dur){
+  $('flash').classList.add('on');
+  setTimeout(()=>$('flash').classList.remove('on'),Math.max(60,dur*1000));
+}
+function playChirp(){
+  if(!running)return;
+  const now=ctx.currentTime+.02,dur=Number($('burst').value)/1000;
+  const [lo,hi]=$('chirpRange').value.split(',').map(Number);
+  const osc=ctx.createOscillator(),g=ctx.createGain();
+  osc.type='sine';osc.frequency.setValueAtTime(lo,now);osc.frequency.exponentialRampToValueAtTime(hi,now+dur);
+  envelope(g,now,dur);osc.connect(g).connect(master);osc.start(now);osc.stop(now+dur+.02);
+  currentNodes.push(osc);flash(dur);
+  setState('Chirp再生中',lo+' → '+hi+' Hz / '+Math.round(dur*1000)+' ms');
+}
+function playNoise(){
+  if(!running)return;
+  const now=ctx.currentTime+.02,dur=Number($('burst').value)/1000;
+  const n=Math.ceil(ctx.sampleRate*dur),buf=ctx.createBuffer(1,n,ctx.sampleRate),a=buf.getChannelData(0);
+  for(let i=0;i<n;i++)a[i]=Math.random()*2-1;
+  const src=ctx.createBufferSource(),hp=ctx.createBiquadFilter(),lp=ctx.createBiquadFilter(),g=ctx.createGain();
+  src.buffer=buf;hp.type='highpass';hp.frequency.value=450;lp.type='lowpass';lp.frequency.value=3800;
+  envelope(g,now,dur);src.connect(hp).connect(lp).connect(g).connect(master);src.start(now);src.stop(now+dur+.02);
+  currentNodes.push(src);flash(dur);
+  setState('Noise Burst再生中','450–3800 Hz / '+Math.round(dur*1000)+' ms');
+}
+function playSine(){
+  if(!running)return;
+  const now=ctx.currentTime+.02,osc=ctx.createOscillator(),g=ctx.createGain(),f=Number($('freq').value);
+  osc.type='sine';osc.frequency.value=f;g.gain.setValueAtTime(.0001,now);g.gain.linearRampToValueAtTime(gainValue(),now+.03);
+  osc.connect(g).connect(master);osc.start(now);currentNodes.push(osc,g);
+  setState('Sine再生中',f+' Hz continuous');$('flash').classList.add('on');
+}
+function scheduleBursts(){
+  const fire=()=>{if(!running)return;mode==='chirp'?playChirp():playNoise();repeatTimer=setTimeout(fire,Number($('period').value))};
+  fire();
+}
+async function beginNow(){
+  await ensureAudio();running=true;
+  master.gain.value=1;
+  if(mode==='sine')playSine();else scheduleBursts();
+  try{if('wakeLock' in navigator)wakeLock=await navigator.wakeLock.request('screen')}catch(_){}
+}
+function stopSound(){
+  running=false;
+  clearTimeout(startTimer);clearTimeout(repeatTimer);startTimer=repeatTimer=null;
+  for(const n of currentNodes){try{if(typeof n.stop==='function')n.stop()}catch(_){}try{n.disconnect()}catch(_){}}
+  currentNodes=[];$('flash').classList.remove('on');setState('停止中','---');
+  if(wakeLock){try{wakeLock.release()}catch(_){}wakeLock=null}
+}
+$('start').addEventListener('click',async()=>{
+  stopSound();await ensureAudio();
+  const sec=Number($('delay').value);
+  if(sec<=0){beginNow();return}
+  let left=sec;setState('開始待ち',left+'秒');
+  const tick=()=>{if(left<=1){startTimer=setTimeout(()=>beginNow(),1000);return}left--;setState('開始待ち',left+'秒');startTimer=setTimeout(tick,1000)};
+  startTimer=setTimeout(tick,1000);
+});
+$('stop').addEventListener('click',stopSound);
+$('freq').addEventListener('input',()=>{if(running&&mode==='sine'){stopSound();beginNow()}});
+$('level').addEventListener('input',()=>{if(master)master.gain.value=1});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&running&&'wakeLock'in navigator&&!wakeLock){navigator.wakeLock.request('screen').then(x=>wakeLock=x).catch(()=>{})}});
+setMode('chirp');
+document.documentElement.dataset.calibratorReady='true';
+</script>
+</body></html>

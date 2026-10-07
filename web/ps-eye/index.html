@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PS Eye 4ch Monitor</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body{margin:0;background:#111;color:#eee}
+main{max-width:980px;margin:auto;padding:20px}
+h1{font-size:1.4rem;margin:0 0 8px}
+.meta{display:flex;gap:14px;flex-wrap:wrap;color:#bbb;font-size:.9rem;margin-bottom:18px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.ch{background:#1d1d1d;border:1px solid #333;border-radius:10px;padding:12px}
+.ch h2{font-size:1rem;margin:0 0 10px}
+.meter{height:260px;background:#080808;border-radius:6px;position:relative;overflow:hidden}
+.fill{position:absolute;left:0;right:0;bottom:0;height:0;background:linear-gradient(to top,#3aa,#ad5,#fd5,#f65);transition:height .04s linear}
+.peak{position:absolute;left:0;right:0;height:2px;background:#fff;bottom:0}
+.value{font-variant-numeric:tabular-nums;margin-top:8px;line-height:1.5}
+.small{color:#999;font-size:.82rem}
+canvas{width:100%;height:90px;background:#080808;border-radius:6px;margin-top:8px}
+#log{white-space:pre-wrap;background:#181818;border-radius:8px;padding:10px;color:#aaa;font-size:.8rem;margin-top:16px}
+.doa{margin:18px 0;background:#1a1a1a;border:1px solid #333;border-radius:12px;padding:16px}
+.doaTop{display:flex;gap:18px;align-items:baseline;flex-wrap:wrap}
+.angle{font-size:2.4rem;font-variant-numeric:tabular-nums;font-weight:700}
+.conf{font-variant-numeric:tabular-nums}
+.arc{height:120px;position:relative;margin-top:8px;border-bottom:2px solid #555;overflow:hidden}
+.arc:before{content:"";position:absolute;left:50%;bottom:0;width:1px;height:100%;background:#444}
+.sourceDot{position:absolute;bottom:10px;width:18px;height:18px;border-radius:50%;background:#eee;transform:translateX(-50%);left:50%;transition:left .08s linear}
+.labels{display:flex;justify-content:space-between;color:#888;font-size:.8rem}
+.pairs{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem;color:#aaa;margin-top:8px}
+.controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.controls input[type=range]{width:180px}
+@media(max-width:700px){.grid{grid-template-columns:repeat(2,1fr)}.meter{height:180px}.angle{font-size:2rem}}
+</style>
+</head>
+<body><main>
+<h1>PS Eye 4ch PCM Monitor</h1>
+<div style="margin:0 0 12px"><a href="dual/" style="color:#9dd">2台PS Eye 2D Sound Locator →</a> / <a href="compare/" style="color:#9dd">Current / SRP-PHAT →</a> / <a href="calibrator/" style="color:#9dd">Calibration Sound Source →</a></div>
+<div class="meta">
+<span>WS: <strong id="state">接続中...</strong></span>
+<span id="format">---</span>
+<span>受信 <strong id="rate">0</strong> KiB/s</span>
+<span>packet <strong id="interval">---</strong> ms</span>
+<span>frames <strong id="frames">0</strong></span>
+</div>
+<div class="small">物理左→右: Mic 1 / ch1, Mic 3 / ch3, Mic 2 / ch2, Mic 4 / ch4。WebSocket上のPCMは論理順 ch1,ch2,ch3,ch4 のままです。</div>
+<div class="grid" id="grid"></div>
+<canvas id="wave" width="920" height="90"></canvas>
+
+<section class="doa">
+  <div class="doaTop">
+    <strong>音源方向（発音位置）</strong>
+    <span class="angle" id="doaAngle">---</span>
+    <span>信頼度 <strong class="conf" id="doaConfidence">0%</strong></span>
+    <span id="doaState">待機中</span>
+  </div>
+  <div class="arc"><div class="sourceDot" id="sourceDot"></div></div>
+  <div class="labels"><span>← 左 -90°</span><span>正面 0°</span><span>右 +90° →</span></div>
+  <div class="controls">
+    <label>音量ゲート <input id="gate" type="range" min="-70" max="-25" value="-52" step="1"> <span id="gateValue">-52 dBFS</span></label>
+  </div>
+  <div class="pairs" id="doaPairs">GCC-PHAT: 32 ms window / 16 ms update</div>
+  <div class="small">直線4マイクなので左右方向のみを推定します。正面と背面は時間差だけでは区別できません。</div>
+</section>
+
+<div id="log"></div>
+</main>
+<script src="ps-eye-doa.js"></script>
+<script>
+const physical=[
+  {logical:0,label:'Mic 1 / ch1'},
+  {logical:2,label:'Mic 3 / ch3'},
+  {logical:1,label:'Mic 2 / ch2'},
+  {logical:3,label:'Mic 4 / ch4'}
+];
+const grid=document.querySelector('#grid');
+const ui=[];
+for(const p of physical){
+  const box=document.createElement('section');
+  box.className='ch';
+  box.innerHTML='<h2>'+p.label+'</h2><div class="meter"><div class="fill"></div><div class="peak"></div></div><div class="value">Peak <span class="pk">-∞</span> dBFS<br>RMS <span class="rms">-∞</span> dBFS</div>';
+  grid.append(box);
+  ui.push({logical:p.logical,fill:box.querySelector('.fill'),peak:box.querySelector('.peak'),pk:box.querySelector('.pk'),rms:box.querySelector('.rms')});
+}
+const state=document.querySelector('#state');
+const fmt=document.querySelector('#format');
+const bytesRate=document.querySelector('#rate');
+const interval=document.querySelector('#interval');
+const frameCount=document.querySelector('#frames');
+const log=document.querySelector('#log');
+const doaAngle=document.querySelector('#doaAngle');
+const doaConfidence=document.querySelector('#doaConfidence');
+const doaState=document.querySelector('#doaState');
+const sourceDot=document.querySelector('#sourceDot');
+const doaPairs=document.querySelector('#doaPairs');
+const gate=document.querySelector('#gate');
+const gateValue=document.querySelector('#gateValue');
+const canvas=document.querySelector('#wave');
+const ctx=canvas.getContext('2d');
+let bytesWindow=0,totalFrames=0,lastPacket=0,lastRateAt=performance.now();
+let lastWave=[[],[],[],[]];
+
+gate.addEventListener('input',()=>{
+  gateValue.textContent=gate.value+' dBFS';
+  PsEyeDoa.setGateDb(Number(gate.value));
+});
+PsEyeDoa.setGateDb(Number(gate.value));
+
+function updateDoa(r){
+  if(!r)return;
+  if(!r.active){
+    doaState.textContent='音量不足';
+    doaConfidence.textContent='0%';
+    return;
+  }
+  const a=Math.max(-90,Math.min(90,r.angle));
+  const conf=Math.round(r.confidence*100);
+  doaAngle.textContent=(a>=0?'+':'')+a.toFixed(1)+'°';
+  doaConfidence.textContent=conf+'%';
+  doaState.textContent=conf>=55?'追跡中':conf>=30?'推定中':'不安定';
+  sourceDot.style.left=((a+90)/180*100)+'%';
+  doaPairs.textContent=r.pairs.map(p=>{
+    const la=p.lag.toFixed(2);
+    const us=(p.lag/16000*1e6).toFixed(0);
+    return MATHPAIR(p)+'='+la+' sample ('+us+' µs)';
+  }).join(' / ')+' | fit '+r.rmse.toFixed(2)+' sample';
+}
+function MATHPAIR(p){
+  const map=['1','3','2','4'];
+  return map[p.a]+'↔'+map[p.b];
+}
+
+function db(v){return v<=0?'-∞':(20*Math.log10(v/32768)).toFixed(1)}
+function pct(dbv){if(!Number.isFinite(dbv))return 0;return Math.max(0,Math.min(100,(dbv+60)/60*100))}
+function drawWave(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.lineWidth=1;
+  const logicalColors=['#7dd','#fd8','#9e8','#f9a'];
+  for(let ch=0;ch<4;ch++){
+    const a=lastWave[ch]; if(!a.length)continue;
+    ctx.strokeStyle=logicalColors[ch];
+    ctx.beginPath();
+    for(let i=0;i<a.length;i++){
+      const x=i/(a.length-1||1)*canvas.width;
+      const y=canvas.height/2-a[i]/32768*(canvas.height*.43);
+      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+}
+function consume(buf){
+  if(buf.byteLength%8!==0){log.textContent='unaligned PCM packet: '+buf.byteLength;return}
+  const dv=new DataView(buf);
+  const frames=buf.byteLength/8;
+  const sum=[0,0,0,0],peak=[0,0,0,0],wave=[[],[],[],[]];
+  const pcm=new Int16Array(frames*4);
+  const stride=Math.max(1,Math.floor(frames/200));
+  for(let f=0;f<frames;f++){
+    for(let ch=0;ch<4;ch++){
+      const sample=dv.getInt16((f*4+ch)*2,true);
+      pcm[f*4+ch]=sample;
+      const a=Math.abs(sample); if(a>peak[ch])peak[ch]=a;
+      sum[ch]+=sample*sample;
+      if(f%stride===0)wave[ch].push(sample);
+    }
+  }
+  for(const item of ui){
+    const ch=item.logical;
+    const p=20*Math.log10(Math.max(1,peak[ch])/32768);
+    const r=Math.sqrt(sum[ch]/frames);
+    const rd=20*Math.log10(Math.max(1,r)/32768);
+    item.fill.style.height=pct(rd)+'%';
+    item.peak.style.bottom=pct(p)+'%';
+    item.pk.textContent=db(peak[ch]);
+    item.rms.textContent=db(r);
+  }
+  lastWave=wave;drawWave();
+  updateDoa(PsEyeDoa.pushInt16(pcm));
+  totalFrames+=frames;frameCount.textContent=totalFrames.toLocaleString();
+  bytesWindow+=buf.byteLength;
+  const now=performance.now();
+  if(lastPacket)interval.textContent=(now-lastPacket).toFixed(1);
+  lastPacket=now;
+  if(now-lastRateAt>=500){
+    bytesRate.textContent=(bytesWindow/1024/((now-lastRateAt)/1000)).toFixed(1);
+    bytesWindow=0;lastRateAt=now;
+  }
+}
+function connect(){
+  const proto=location.protocol==='https:'?'wss:':'ws:';
+  const ws=new WebSocket(proto+'//'+location.host+'/ps-eye/ws');
+  ws.binaryType='arraybuffer';
+  state.textContent='接続中...';
+  ws.onopen=()=>state.textContent='接続済み';
+  ws.onmessage=e=>{
+    if(typeof e.data==='string'){
+      try{
+        const m=JSON.parse(e.data);
+        if(m.type==='hello'){
+          fmt.textContent=m.channels+'ch / '+m.format+' / '+m.rate+' Hz / block '+m.block_ms+' ms';
+          log.textContent=JSON.stringify(m,null,2);
+        }else if(m.type==='error'){
+          state.textContent='capture error';log.textContent=m.error;
+        }
+      }catch(err){log.textContent=String(err)}
+    }else consume(e.data);
+  };
+  ws.onerror=()=>state.textContent='エラー';
+  ws.onclose=()=>{state.textContent='再接続待ち';setTimeout(connect,2000)};
+}
+const selfTest=PsEyeDoa.selfTest();
+document.documentElement.dataset.doaSelftest=selfTest.pass?'pass':'fail';
+if(!selfTest.pass){
+  log.textContent='DOA self-test failed: '+JSON.stringify(selfTest);
+}
+if(new URLSearchParams(location.search).has('selftest')){
+  state.textContent='self-test';
+  log.textContent=JSON.stringify(selfTest,null,2);
+}else{
+  connect();
+}
+</script>
+</body></html>
