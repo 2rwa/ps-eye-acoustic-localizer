@@ -43,6 +43,7 @@ canvas{width:100%;height:90px;background:#080808;border-radius:6px;margin-top:8p
 <span>受信 <strong id="rate">0</strong> KiB/s</span>
 <span>packet <strong id="interval">---</strong> ms</span>
 <span>frames <strong id="frames">0</strong></span>
+<button id="reconnect" style="background:#242424;color:#eee;border:1px solid #555;border-radius:8px;padding:6px 10px">PS Eye 再接続</button>
 </div>
 <div class="small">物理左→右: Mic 1 / ch1, Mic 3 / ch3, Mic 2 / ch2, Mic 4 / ch4。WebSocket上のPCMは論理順 ch1,ch2,ch3,ch4 のままです。</div>
 <div class="grid" id="grid"></div>
@@ -99,7 +100,7 @@ const gateValue=document.querySelector('#gateValue');
 const canvas=document.querySelector('#wave');
 const ctx=canvas.getContext('2d');
 let bytesWindow=0,totalFrames=0,lastPacket=0,lastRateAt=performance.now();
-let lastWave=[[],[],[],[]];
+let lastWave=[[],[],[],[]],activeWs=null,reconnectTimer=null;
 
 gate.addEventListener('input',()=>{
   gateValue.textContent=gate.value+' dBFS';
@@ -188,12 +189,14 @@ function consume(buf){
   }
 }
 function connect(){
+  clearTimeout(reconnectTimer);
   const proto=location.protocol==='https:'?'wss:':'ws:';
   const ws=new WebSocket(proto+'//'+location.host+'/ps-eye/ws');
-  ws.binaryType='arraybuffer';
+  activeWs=ws;ws.binaryType='arraybuffer';
   state.textContent='接続中...';
-  ws.onopen=()=>state.textContent='接続済み';
+  ws.onopen=()=>{if(activeWs===ws)state.textContent='接続済み'};
   ws.onmessage=e=>{
+    if(activeWs!==ws)return;
     if(typeof e.data==='string'){
       try{
         const m=JSON.parse(e.data);
@@ -206,9 +209,20 @@ function connect(){
       }catch(err){log.textContent=String(err)}
     }else consume(e.data);
   };
-  ws.onerror=()=>state.textContent='エラー';
-  ws.onclose=()=>{state.textContent='再接続待ち';setTimeout(connect,2000)};
+  ws.onerror=()=>{if(activeWs===ws)state.textContent='エラー'};
+  ws.onclose=()=>{
+    if(activeWs!==ws)return;
+    state.textContent='再接続待ち';
+    reconnectTimer=setTimeout(connect,2000);
+  };
 }
+document.querySelector('#reconnect').onclick=()=>{
+  clearTimeout(reconnectTimer);
+  const old=activeWs;activeWs=null;
+  state.textContent='reset中';
+  if(old){old.onclose=null;try{old.close(1000,'manual reset')}catch(_){}}
+  setTimeout(()=>{bytesWindow=0;lastPacket=0;connect()},450);
+};
 const selfTest=PsEyeDoa.selfTest();
 document.documentElement.dataset.doaSelftest=selfTest.pass?'pass':'fail';
 if(!selfTest.pass){
