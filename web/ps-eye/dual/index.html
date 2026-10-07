@@ -26,6 +26,9 @@ canvas{display:block;width:100%;height:auto;max-height:620px;background:#0b0b0b;
 .control input[type=range]{width:100%}
 .control .v{font-variant-numeric:tabular-nums;color:#fff}
 .note{font-size:.8rem;color:#999;margin-top:10px;line-height:1.5}
+.resetbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}
+.resetbar button{background:#242424;color:#eee;border:1px solid #555;border-radius:9px;padding:9px 13px;font:inherit}
+.resetbar .status{color:#aaa;font-size:.82rem}
 #log{white-space:pre-wrap;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#999;margin-top:10px}
 @media(max-width:760px){.cards{grid-template-columns:1fr}.controls{grid-template-columns:1fr}.angle{font-size:1.8rem}}
 </style>
@@ -47,6 +50,13 @@ canvas{display:block;width:100%;height:auto;max-height:620px;background:#0b0b0b;
     <div><span class="angle" id="bAngle">---</span> <span id="bState">接続中...</span></div>
     <div class="meta"><span>WS <b id="bWs">---</b></span><span>信頼度 <b id="bConf">0%</b></span><span>Level <b id="bLevel">---</b></span><span>frames <b id="bFrames">0</b></span><span>処理 <b id="bProc">---</b></span><span>更新 <b id="bHz">---</b></span><span>packet <b id="bPkt">---</b></span><span>slow <b id="bSlow">0</b></span></div>
   </section>
+</div>
+
+<div class="resetbar">
+  <button id="reconnectA">Array A 再接続</button>
+  <button id="reconnectB">Array B 再接続</button>
+  <button id="reconnectBoth">両方 再接続</button>
+  <span class="status" id="reconnectState">抜き差し後に押すと arecord を起動し直します</span>
 </div>
 
 <section class="loc">
@@ -74,10 +84,11 @@ canvas{display:block;width:100%;height:auto;max-height:620px;background:#0b0b0b;
 <script src="../ps-eye-doa-factory.js"></script>
 <script>
 'use strict';
-const A=PsEyeDoaFactory.createEstimator(), B=PsEyeDoaFactory.createEstimator();
+let A=PsEyeDoaFactory.createEstimator(), B=PsEyeDoaFactory.createEstimator();
 const $=id=>document.getElementById(id);
 const canvas=$('map'),ctx=canvas.getContext('2d');
 let lastA=null,lastB=null,lastAT=0,lastBT=0,framesA=0,framesB=0,smoothPos=null;
+const sockets={A:null,B:null},reconnectTimers={A:null,B:null};
 const perfState={
   A:{procAvg:0,procMax:0,lastPacket:0,pktAvg:0,slow:0,updates:0,hzAt:performance.now(),hz:0},
   B:{procAvg:0,procMax:0,lastPacket:0,pktAvg:0,slow:0,updates:0,hzAt:performance.now(),hz:0}
@@ -194,11 +205,15 @@ function parsePCM(buf){
   for(let i=0;i<pcm.length;i++)pcm[i]=dv.getInt16(i*2,true);
   return pcm;
 }
-function connectArray(which,path,estimator){
-  const ws=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+path);ws.binaryType='arraybuffer';
+const paths={A:'/ps-eye/a/ws',B:'/ps-eye/b/ws'};
+function connectArray(which,path=paths[which]){
+  clearTimeout(reconnectTimers[which]);
+  const estimator=which==='A'?A:B;
+  const ws=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+path);sockets[which]=ws;ws.binaryType='arraybuffer';
   const wsEl=$(which.toLowerCase()+'Ws');wsEl.textContent='接続中';
-  ws.onopen=()=>wsEl.textContent='OK';
+  ws.onopen=()=>{if(sockets[which]===ws)wsEl.textContent='OK'};
   ws.onmessage=e=>{
+    if(sockets[which]!==ws)return;
     if(typeof e.data==='string'){
       try{const m=JSON.parse(e.data);if(m.type==='error'){$(which.toLowerCase()+'State').textContent='capture error';$('log').textContent=which+': '+m.error}}catch(_){}
       return;
@@ -210,8 +225,32 @@ function connectArray(which,path,estimator){
     else{framesB+=frames;if(r){lastB=r;lastBT=performance.now()}updateArray('b',lastB,framesB)}
     render();
   };
-  ws.onerror=()=>wsEl.textContent='error';
-  ws.onclose=()=>{wsEl.textContent='再接続';setTimeout(()=>connectArray(which,path,estimator),2000)};
+  ws.onerror=()=>{if(sockets[which]===ws)wsEl.textContent='error'};
+  ws.onclose=()=>{
+    if(sockets[which]!==ws)return;
+    wsEl.textContent='再接続';
+    reconnectTimers[which]=setTimeout(()=>connectArray(which,path),2000);
+  };
+}
+function resetOneEstimator(which){
+  const est=PsEyeDoaFactory.createEstimator();est.setGateDb($('gate').value);
+  if(which==='A'){A=est;lastA=null;lastAT=0;framesA=0;updateArray('a',null,0)}
+  else{B=est;lastB=null;lastBT=0;framesB=0;updateArray('b',null,0)}
+  const p=perfState[which];p.procAvg=0;p.procMax=0;p.lastPacket=0;p.pktAvg=0;p.slow=0;p.updates=0;p.hz=0;p.hzAt=performance.now();
+  smoothPos=null;render();
+}
+function reconnectArray(which){
+  clearTimeout(reconnectTimers[which]);reconnectTimers[which]=null;
+  resetOneEstimator(which);
+  const q=which.toLowerCase(),old=sockets[which];sockets[which]=null;
+  $(q+'Ws').textContent='reset中';$(q+'State').textContent='再初期化中';
+  if(old){old.onclose=null;try{old.close(1000,'manual reset')}catch(_){}}
+  $('reconnectState').textContent='Array '+which+' を再接続中…';
+  setTimeout(()=>{connectArray(which);$('reconnectState').textContent='Array '+which+' 再接続要求済み'},450);
+}
+function reconnectBoth(){
+  reconnectArray('A');setTimeout(()=>reconnectArray('B'),180);
+  $('reconnectState').textContent='A/B を再接続中…';
 }
 function bind(id,key,scale=1,suffix=''){
   const el=$(id),v=$(id+'v');
@@ -233,11 +272,15 @@ function geometrySelfTest(){
   const err=r.valid?Math.hypot(r.x-target.x,r.y-target.y):99;
   return{pass:r.valid&&err<1e-6,angleA:aa,angleB:bb,error:err};
 }
+$('reconnectA').onclick=()=>reconnectArray('A');
+$('reconnectB').onclick=()=>reconnectArray('B');
+$('reconnectBoth').onclick=reconnectBoth;
+
 const gst=geometrySelfTest();document.documentElement.dataset.geometrySelftest=gst.pass?'pass':'fail';
 if(new URLSearchParams(location.search).has('selftest')){
   $('log').textContent=JSON.stringify(gst,null,2);$('locState').textContent='self-test';render();
 }else{
-  connectArray('A','/ps-eye/a/ws',A);connectArray('B','/ps-eye/b/ws',B);render();
+  connectArray('A');connectArray('B');render();
 }
 </script>
 </body>
