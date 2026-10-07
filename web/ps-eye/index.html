@@ -216,10 +216,15 @@ function connect(){
     reconnectTimer=setTimeout(connect,2000);
   };
 }
-document.querySelector('#reconnect').onclick=()=>{
+document.querySelector('#reconnect').onclick=async()=>{
   clearTimeout(reconnectTimer);
+  state.textContent='backend reset中';
+  try{
+    const res=await fetch('/api/ps-eye/reset?array=a',{method:'POST',headers:{'X-PS-Eye-Reset':'1'},cache:'no-store'});
+    if(!res.ok)throw new Error('reset HTTP '+res.status);
+  }catch(e){log.textContent='backend reset failed: '+e}
   const old=activeWs;activeWs=null;
-  state.textContent='reset中';
+  state.textContent='再接続中';
   if(old){old.onclose=null;try{old.close(1000,'manual reset')}catch(_){}}
   setTimeout(()=>{bytesWindow=0;lastPacket=0;connect()},450);
 };
