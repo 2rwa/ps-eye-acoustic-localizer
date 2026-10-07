@@ -1,0 +1,52 @@
+name: Static and standalone checks
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python and shell syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile server/server.py server/ps_eye_stream.py tests/test_ps_eye_websocket.py
+          bash -n server/run.sh
+
+      - name: JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check web/ps-eye/ps-eye-doa.js
+          node --check web/ps-eye/ps-eye-doa-factory.js
+          node --check web/ps-eye/ps-eye-srp-factory.js
+
+      - name: Standalone HTTP smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          PORT=18080 ./server/run.sh >/tmp/ps-eye-server.log 2>&1 &
+          PID=$!
+          trap 'kill "$PID" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:18080/healthz >/tmp/health.json && break
+            sleep 0.2
+          done
+          python3 - <<'PY'
+          import json
+          d=json.load(open("/tmp/health.json"))
+          assert d["ok"] is True
+          assert set(d["ps_eye"]) == {"a","b"}
+          print("HEALTH_OK")
+          PY
+          curl -fsS http://127.0.0.1:18080/ps-eye/ | grep -F "PS Eye 4ch PCM Monitor"
+          curl -fsS http://127.0.0.1:18080/ps-eye/dual/ | grep -F "Dual PS Eye 2D Sound Locator"
+          curl -fsS http://127.0.0.1:18080/ps-eye/compare/ | grep -F "PS Eye Current / SRP-PHAT Comparison"
+          curl -fsS http://127.0.0.1:18080/ps-eye/calibrator/ | grep -F "PS Eye Calibration Sound Source"
+          echo "STANDALONE_STATIC_OK"
