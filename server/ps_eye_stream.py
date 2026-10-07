@@ -98,6 +98,7 @@ class PsEyeHub:
         self._packets = 0
         self._bytes = 0
         self._last_error: str | None = None
+        self._restart_requested = False
 
     def status(self) -> dict:
         with self._lock:
@@ -117,23 +118,60 @@ class PsEyeHub:
                 "last_error": self._last_error,
             }
 
-    def add(self, sock: socket.socket) -> None:
-        start = False
+    def _ensure_capture(self) -> None:
+        thread = None
         with self._lock:
-            self._clients.add(sock)
-            if self._thread is None or not self._thread.is_alive():
-                start = True
-                self._thread = threading.Thread(
+            if self._clients and (self._thread is None or not self._thread.is_alive()):
+                thread = threading.Thread(
                     target=self._capture_loop,
                     name=f"ps-eye-capture-{self.name}",
                     daemon=True,
                 )
-        if start:
-            self._thread.start()
+                self._thread = thread
+        if thread is not None:
+            thread.start()
+
+    def add(self, sock: socket.socket) -> None:
+        with self._lock:
+            self._clients.add(sock)
+        self._ensure_capture()
 
     def remove(self, sock: socket.socket) -> None:
         with self._lock:
             self._clients.discard(sock)
+
+    def restart(self) -> dict:
+        """Force the current arecord process down and allow a clean restart."""
+        with self._lock:
+            self._restart_requested = True
+            proc = self._proc
+            thread_alive = self._thread is not None and self._thread.is_alive()
+            clients = len(self._clients)
+            self._last_error = None
+
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=0.8)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    proc.wait(timeout=0.8)
+                except subprocess.TimeoutExpired:
+                    pass
+
+        if not thread_alive:
+            with self._lock:
+                self._restart_requested = False
+            self._ensure_capture()
+
+        return {
+            "ok": True,
+            "array": self.name,
+            "device": self.device,
+            "clients": clients,
+            "capture_was_running": proc is not None,
+        }
 
     def _client_snapshot(self) -> list[socket.socket]:
         with self._lock:
@@ -205,7 +243,9 @@ class PsEyeHub:
                 else:
                     carry = data
 
-            if proc.poll() not in (None, 0) and self._client_count() > 0:
+            with self._lock:
+                restarting = self._restart_requested
+            if proc.poll() not in (None, 0) and self._client_count() > 0 and not restarting:
                 err = ""
                 if proc.stderr is not None:
                     err = proc.stderr.read().decode("utf-8", "replace").strip()
@@ -223,9 +263,16 @@ class PsEyeHub:
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     proc.wait(timeout=1)
+            restart = False
             with self._lock:
                 self._proc = None
                 self._capture_running = False
+                if self._thread is threading.current_thread():
+                    self._thread = None
+                restart = self._restart_requested and bool(self._clients)
+                self._restart_requested = False
+            if restart:
+                self._ensure_capture()
 
 
 HUB_A = PsEyeHub("A", DEVICE_A)
@@ -234,6 +281,17 @@ HUB_B = PsEyeHub("B", DEVICE_B)
 
 def status() -> dict:
     return {"a": HUB_A.status(), "b": HUB_B.status()}
+
+
+def restart(array: str = "both") -> dict:
+    key = array.lower()
+    if key == "a":
+        return {"ok": True, "results": [HUB_A.restart()], "status": status()}
+    if key == "b":
+        return {"ok": True, "results": [HUB_B.restart()], "status": status()}
+    if key == "both":
+        return {"ok": True, "results": [HUB_A.restart(), HUB_B.restart()], "status": status()}
+    raise ValueError("array must be a, b, or both")
 
 
 def handle_websocket(handler, array: str = "a") -> None:
