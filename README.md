@@ -40,6 +40,13 @@ PS_EYE_B='hw:CARD=CameraB304061,DEV=0' \
 ./server/run.sh
 ```
 
+## PS Eye 再接続
+
+4ch monitor / dual / compare / nearfield に再接続ボタンがあります。
+ボタンは `POST /api/ps-eye/reset?array=a|b|both` を呼び、該当 `arecord` を強制終了してcaptureを作り直した後、WebSocketも再接続します。
+
+USBデバイス自体が `lsusb` / ALSA一覧から消えている場合はソフトウェアresetでは復旧できないため、物理再接続をやり直してください。
+
 ## テスト
 
 実機がある状態で:
