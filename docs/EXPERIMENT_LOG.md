@@ -52,3 +52,26 @@ USBRESETでは回復せず、古いcontrollerは`uhubctl`でport power control�
 
 Current/SRPともDSPをbrowserへ寄せ、host側負荷をPCM転送中心にした。
 UIにはproc ms / update Hz / packet ms / slow countを表示し、端末側の計算落ちを切り分けられるようにしている。
+
+
+## Near-field 2D SRP-PHAT synthetic validation
+
+Near-field実装では、各array内部6 pairのPHAT delay responseを `-4..+4 sample` / 1/32 sample刻みで作り、A/B合計12 pairをXY gridへ融合する。
+
+default geometry:
+
+```text
+Array A: (0.00 m, 0.00 m), +18°
+Array B: (0.50 m, 0.00 m), -18°
+grid step: 0.02 m
+```
+
+既知XYから2台ぶんの4ch合成PCMを生成して、FFT → PHAT response → near-field 2D scanまで通したCI self-test:
+
+```text
+target (0.20, 0.70) -> estimated (0.2046, 0.7015), error 0.0049 m
+target (0.55, 1.05) -> estimated (0.5594, 1.0799), error 0.0313 m
+target (-0.10, 0.90) -> estimated (-0.0977, 0.8810), error 0.0191 m
+```
+
+これは理想的な合成信号に対する実装検証値であり、室内反射・PS Eye実機誤差・array設置誤差を含む実環境精度を意味しない。
