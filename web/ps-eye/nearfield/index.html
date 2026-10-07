@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PS Eye Near-field 2D SRP-PHAT</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:#0e0e0e;color:#eee}
+main{max-width:1220px;margin:auto;padding:18px}
+h1{font-size:1.45rem;margin:0 0 6px}
+.sub{color:#aaa;font-size:.88rem;line-height:1.5;margin-bottom:12px}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.card,.panel{border:1px solid #333;border-radius:12px;background:#191919;padding:14px}
+.big{font-size:1.8rem;font-weight:700;font-variant-numeric:tabular-nums}
+.meta{display:flex;gap:11px;flex-wrap:wrap;color:#bbb;font-size:.83rem}
+.topline{display:flex;gap:18px;align-items:baseline;flex-wrap:wrap}
+canvas{display:block;width:100%;height:auto;background:#090909;border-radius:8px;margin-top:10px}
+#heatmap{max-height:700px}
+.controls{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:9px;margin-top:12px}
+.control{background:#171717;border:1px solid #333;border-radius:9px;padding:9px}
+.control label{display:block;color:#bbb;font-size:.8rem}
+.control input[type=range]{width:100%}
+.control select{width:100%;margin-top:7px;background:#111;color:#eee;border:1px solid #444;border-radius:7px;padding:6px}
+.v{color:#fff;font-variant-numeric:tabular-nums}
+.note{font-size:.8rem;color:#999;line-height:1.5;margin-top:10px}
+#log{white-space:pre-wrap;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#999;margin-top:10px}
+@media(max-width:800px){.cards{grid-template-columns:1fr}.controls{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:520px){.controls{grid-template-columns:1fr}.big{font-size:1.5rem}}
+</style>
+</head>
+<body><main>
+<h1>Near-field 2D SRP-PHAT + Heatmap</h1>
+<div style="margin:0 0 8px"><a href="../compare/" style="color:#9dd">Current / SRP-PHAT 比較 →</a> / <a href="../dual/" style="color:#9dd">方位線2D版 →</a> / <a href="../calibrator/" style="color:#9dd">Calibration Sound Source →</a></div>
+<div class="sub">A/Bの角度を先に1本へ決めず、各XY候補点から12マイクペアの理論TDOAを計算し、PHAT responseを直接合成します。A/B間の位相は使わないため、2台の独立USB clockでも動作します。</div>
+
+<div class="cards">
+  <section class="card">
+    <strong>Array A — B4.09.24.1</strong>
+    <div><span class="big" id="aLevel">---</span> <span id="aState">接続中...</span></div>
+    <div class="meta"><span>WS <b id="aWs">---</b></span><span>proc <b id="aProc">---</b></span><span>update <b id="aHz">---</b></span><span>packet <b id="aPkt">---</b></span></div>
+  </section>
+  <section class="card">
+    <strong>Array B — B3.04.06.1</strong>
+    <div><span class="big" id="bLevel">---</span> <span id="bState">接続中...</span></div>
+    <div class="meta"><span>WS <b id="bWs">---</b></span><span>proc <b id="bProc">---</b></span><span>update <b id="bHz">---</b></span><span>packet <b id="bPkt">---</b></span></div>
+  </section>
+</div>
+
+<section class="panel" style="margin-top:12px">
+  <div class="topline">
+    <strong>2D spatial likelihood</strong>
+    <span class="big" id="xy">---</span>
+    <span>confidence <b id="confidence">0%</b></span>
+    <span>peak Z <b id="peakZ">---</b></span>
+    <span id="state">待機中</span>
+  </div>
+  <div class="meta" style="margin-top:5px">
+    <span>grid <b id="gridSize">---</b></span>
+    <span>build <b id="buildMs">---</b></span>
+    <span>scan <b id="scanMs">---</b></span>
+    <span>heatmap <b id="heatHz">---</b></span>
+    <span>band <b>500–3500 Hz</b></span>
+    <span>delay table <b>1/32 sample</b></span>
+  </div>
+  <canvas id="heatmap" width="1000" height="700"></canvas>
+  <div class="note">暗い領域ほどscoreが低く、明るい領域ほど12 pairで整合します。白い丸が最大尤度位置です。両arrayの前方半面だけを探索対象にしています。</div>
+</section>
+
+<div class="controls">
+  <div class="control"><label>Array B X <span class="v" id="bXv">50 cm</span></label><input id="bX" type="range" min="20" max="150" value="50" step="1"></div>
+  <div class="control"><label>Array B Y <span class="v" id="bYv">0 cm</span></label><input id="bY" type="range" min="-50" max="100" value="0" step="1"></div>
+  <div class="control"><label>Array A heading <span class="v" id="aHv">18°</span></label><input id="aH" type="range" min="-90" max="90" value="18" step="1"></div>
+  <div class="control"><label>Array B heading <span class="v" id="bHv">-18°</span></label><input id="bH" type="range" min="-90" max="90" value="-18" step="1"></div>
+  <div class="control"><label>X min <span class="v" id="xMinv">-75 cm</span></label><input id="xMin" type="range" min="-200" max="0" value="-75" step="5"></div>
+  <div class="control"><label>X max <span class="v" id="xMaxv">125 cm</span></label><input id="xMax" type="range" min="50" max="300" value="125" step="5"></div>
+  <div class="control"><label>Y min <span class="v" id="yMinv">-15 cm</span></label><input id="yMin" type="range" min="-100" max="50" value="-15" step="5"></div>
+  <div class="control"><label>Y max <span class="v" id="yMaxv">200 cm</span></label><input id="yMax" type="range" min="50" max="400" value="200" step="5"></div>
+  <div class="control"><label>Grid step</label><select id="step"><option value="0.04">4 cm — light</option><option value="0.02" selected>2 cm — default</option><option value="0.01">1 cm — heavy</option></select></div>
+  <div class="control"><label>Scan interval</label><select id="scanEvery"><option value="33">33 ms</option><option value="50">50 ms</option><option value="100" selected>100 ms</option><option value="200">200 ms</option></select></div>
+  <div class="control"><label>Gate <span class="v" id="gateV">-52 dBFS</span></label><input id="gate" type="range" min="-70" max="-25" value="-52" step="1"></div>
+</div>
+
+<div id="log"></div>
+</main>
+<script src="../ps-eye-nearfield-factory.js"></script>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const canvas=$('heatmap'),ctx=canvas.getContext('2d'),off=document.createElement('canvas'),offCtx=off.getContext('2d');
+let A=PsEyeNearfieldFactory.createArrayEstimator(),B=PsEyeNearfieldFactory.createArrayEstimator();
+let lastA=null,lastB=null,lastAT=0,lastBT=0,grid=null,lastScanAt=0,lastHeatAt=0,heatHz=0,rebuildTimer=null;
+let smooth=null;
+const perf={
+  A:{avg:0,lastPkt:0,pkt:0,updates:0,hz:0,hzAt:performance.now()},
+  B:{avg:0,lastPkt:0,pkt:0,updates:0,hz:0,hzAt:performance.now()}
+};
+
+function geom(){
+  return{
+    arrayA:{x:0,y:0,heading:Number($('aH').value)},
+    arrayB:{x:Number($('bX').value)/100,y:Number($('bY').value)/100,heading:Number($('bH').value)},
+    xMin:Number($('xMin').value)/100,xMax:Number($('xMax').value)/100,
+    yMin:Number($('yMin').value)/100,yMax:Number($('yMax').value)/100,
+    step:Number($('step').value)
+  };
+}
+function updateLabels(){
+  for(const id of ['bX','bY','xMin','xMax','yMin','yMax'])$(id+'v').textContent=$(id).value+' cm';
+  $('aHv').textContent=$('aH').value+'°';$('bHv').textContent=$('bH').value+'°';$('gateV').textContent=$('gate').value+' dBFS';
+}
+function rebuild(){
+  clearTimeout(rebuildTimer);rebuildTimer=null;
+  updateLabels();
+  const g=geom();
+  if(g.xMax<=g.xMin||g.yMax<=g.yMin){$('state').textContent='範囲設定エラー';return}
+  $('state').textContent='grid構築中';
+  const t0=performance.now();
+  try{
+    grid=PsEyeNearfieldFactory.buildGrid(g);
+    $('buildMs').textContent=(performance.now()-t0).toFixed(1)+' ms';
+    $('gridSize').textContent=grid.nx+'×'+grid.ny+' = '+grid.count.toLocaleString();
+    smooth=null;drawEmpty();$('state').textContent='入力待ち';
+  }catch(e){$('state').textContent='grid error';$('log').textContent=String(e)}
+}
+function scheduleRebuild(){clearTimeout(rebuildTimer);rebuildTimer=setTimeout(rebuild,120)}
+for(const id of ['bX','bY','aH','bH','xMin','xMax','yMin','yMax','step'])$(id).addEventListener('input',scheduleRebuild);
+$('gate').addEventListener('input',()=>{updateLabels();A.setGateDb($('gate').value);B.setGateDb($('gate').value)});
+A.setGateDb($('gate').value);B.setGateDb($('gate').value);
+
+function perfUpdate(which,ms,result){
+  const p=perf[which],now=performance.now();
+  p.avg=p.avg?p.avg*.88+ms*.12:ms;
+  if(p.lastPkt){const d=now-p.lastPkt;p.pkt=p.pkt?p.pkt*.9+d*.1:d}
+  p.lastPkt=now;if(result)p.updates++;
+  if(now-p.hzAt>=1000){p.hz=p.updates*1000/(now-p.hzAt);p.updates=0;p.hzAt=now}
+  const q=which.toLowerCase();
+  $(q+'Proc').textContent=p.avg.toFixed(1)+' ms';$(q+'Hz').textContent=p.hz.toFixed(1)+' Hz';$(q+'Pkt').textContent=(p.pkt||0).toFixed(1)+' ms';
+}
+function arrayUi(q,r){
+  $(q+'Level').textContent=r?r.levelDb.toFixed(1)+' dBFS':'---';
+  $(q+'State').textContent=!r?'解析待ち':r.active?'PHAT ready':'音量不足';
+}
+function parsePCM(buf){
+  if(buf.byteLength%8)return null;const dv=new DataView(buf),pcm=new Int16Array(buf.byteLength/2);
+  for(let i=0;i<pcm.length;i++)pcm[i]=dv.getInt16(i*2,true);return pcm;
+}
+function connect(which,path){
+  const q=which.toLowerCase(),ws=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+path);ws.binaryType='arraybuffer';
+  $(q+'Ws').textContent='接続中';
+  ws.onopen=()=>$(q+'Ws').textContent='OK';
+  ws.onmessage=e=>{
+    if(typeof e.data==='string'){try{const m=JSON.parse(e.data);if(m.type==='error')$('log').textContent=which+': '+m.error}catch(_){}return}
+    const pcm=parsePCM(e.data);if(!pcm)return;
+    const est=which==='A'?A:B,t0=performance.now(),r=est.pushInt16(pcm),ms=performance.now()-t0;
+    perfUpdate(which,ms,!!r);
+    if(r){if(which==='A'){lastA=r;lastAT=performance.now()}else{lastB=r;lastBT=performance.now()}}
+    arrayUi(q,which==='A'?lastA:lastB);maybeScan();
+  };
+  ws.onerror=()=>$(q+'Ws').textContent='error';
+  ws.onclose=()=>{$(q+'Ws').textContent='再接続';setTimeout(()=>connect(which,path),2000)};
+}
+function maybeScan(){
+  if(!grid||!lastA?.active||!lastB?.active)return;
+  const now=performance.now(),interval=Number($('scanEvery').value);
+  if(now-lastScanAt<interval||now-lastAT>350||now-lastBT>350)return;
+  lastScanAt=now;
+  const t0=performance.now(),r=PsEyeNearfieldFactory.scan(grid,lastA,lastB),ms=performance.now()-t0;
+  $('scanMs').textContent=ms.toFixed(1)+' ms';
+  if(!r.valid){$('state').textContent=r.reason||'scan failed';return}
+  const alpha=Math.max(.12,Math.min(.4,r.confidence*.45));
+  if(!smooth)smooth={x:r.x,y:r.y};else{smooth.x=smooth.x*(1-alpha)+r.x*alpha;smooth.y=smooth.y*(1-alpha)+r.y*alpha}
+  $('xy').textContent='X '+(smooth.x*100).toFixed(0)+' cm / Y '+(smooth.y*100).toFixed(0)+' cm';
+  $('confidence').textContent=Math.round(r.confidence*100)+'%';$('peakZ').textContent=r.z.toFixed(2);$('state').textContent='測位中';
+  const hn=performance.now();if(lastHeatAt){const inst=1000/(hn-lastHeatAt);heatHz=heatHz?heatHz*.8+inst*.2:inst}$('heatHz').textContent=heatHz.toFixed(1)+' Hz';lastHeatAt=hn;
+  drawHeatmap(r,smooth);
+}
+
+function worldToCanvas(x,y){
+  if(!grid)return{x:0,y:0};
+  return{x:(x-grid.xMin)/(grid.xMax-grid.xMin)*canvas.width,y:canvas.height-(y-grid.yMin)/(grid.yMax-grid.yMin)*canvas.height};
+}
+function color(t){
+  t=Math.max(0,Math.min(1,t));
+  if(t<.25){const u=t/.25;return[0,Math.round(25*u),Math.round(55+120*u)]}
+  if(t<.5){const u=(t-.25)/.25;return[0,Math.round(25+190*u),Math.round(175+55*u)]}
+  if(t<.75){const u=(t-.5)/.25;return[Math.round(230*u),Math.round(215+35*u),Math.round(230*(1-u))]}
+  const u=(t-.75)/.25;return[230+Math.round(25*u),250+Math.round(5*u),Math.round(210+45*u)]
+}
+function drawHeatmap(r,pos){
+  off.width=grid.nx;off.height=grid.ny;
+  const img=offCtx.createImageData(grid.nx,grid.ny),low=r.mean-.35*r.sd,span=Math.max(1e-9,r.best-low);
+  for(let iy=0;iy<grid.ny;iy++)for(let ix=0;ix<grid.nx;ix++){
+    const si=iy*grid.nx+ix,py=grid.ny-1-iy,di=(py*grid.nx+ix)*4,s=r.scores[si];
+    if(!Number.isFinite(s)){img.data[di]=8;img.data[di+1]=8;img.data[di+2]=8;img.data[di+3]=255;continue}
+    const t=Math.pow(Math.max(0,Math.min(1,(s-low)/span)),1.35),c=color(t);
+    img.data[di]=c[0];img.data[di+1]=c[1];img.data[di+2]=c[2];img.data[di+3]=255;
+  }
+  offCtx.putImageData(img,0,0);ctx.clearRect(0,0,canvas.width,canvas.height);ctx.imageSmoothingEnabled=false;ctx.drawImage(off,0,0,canvas.width,canvas.height);
+  drawOverlay(pos);
+}
+function drawArray(array,label,mics){
+  const p0=worldToCanvas(mics[0].x,mics[0].y),p1=worldToCanvas(mics[mics.length-1].x,mics[mics.length-1].y),c=worldToCanvas(array.x,array.y);
+  ctx.strokeStyle='#fff';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(p0.x,p0.y);ctx.lineTo(p1.x,p1.y);ctx.stroke();
+  const r=array.heading*Math.PI/180,d={x:Math.sin(r),y:Math.cos(r)},q=worldToCanvas(array.x+d.x*.18,array.y+d.y*.18);
+  ctx.strokeStyle='#ddd';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(c.x,c.y);ctx.lineTo(q.x,q.y);ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='17px system-ui';ctx.fillText(label,c.x+8,c.y-8);
+}
+function drawOverlay(pos){
+  if(!grid)return;
+  ctx.strokeStyle='rgba(255,255,255,.16)';ctx.lineWidth=1;
+  for(let x=Math.ceil(grid.xMin*4)/4;x<=grid.xMax;x+=.25){const a=worldToCanvas(x,grid.yMin),b=worldToCanvas(x,grid.yMax);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke()}
+  for(let y=Math.ceil(grid.yMin*4)/4;y<=grid.yMax;y+=.25){const a=worldToCanvas(grid.xMin,y),b=worldToCanvas(grid.xMax,y);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke()}
+  drawArray(grid.arrayA,'A',grid.micA);drawArray(grid.arrayB,'B',grid.micB);
+  if(pos){const p=worldToCanvas(pos.x,pos.y);ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(p.x,p.y,8,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#000';ctx.lineWidth=2;ctx.stroke()}
+}
+function drawEmpty(){ctx.clearRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#111';ctx.fillRect(0,0,canvas.width,canvas.height);drawOverlay(null)}
+
+document.documentElement.dataset.nearfieldReady='true';
+updateLabels();rebuild();
+if(new URLSearchParams(location.search).has('selftest')){
+  const r=PsEyeNearfieldFactory.selfTest();
+  document.documentElement.dataset.nearfieldSelftest=r.pass?'pass':'fail';
+  $('log').textContent=JSON.stringify(r,null,2);$('state').textContent='self-test '+(r.pass?'PASS':'FAIL');
+}else{
+  connect('A','/ps-eye/a/ws');connect('B','/ps-eye/b/ws');
+}
+</script>
+</body></html>

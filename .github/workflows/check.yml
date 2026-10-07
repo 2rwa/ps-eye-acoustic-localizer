@@ -26,6 +26,19 @@ jobs:
           node --check web/ps-eye/ps-eye-doa.js
           node --check web/ps-eye/ps-eye-doa-factory.js
           node --check web/ps-eye/ps-eye-srp-factory.js
+          node --check web/ps-eye/ps-eye-nearfield-factory.js
+
+      - name: Near-field synthetic self-test
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          global.window=global;
+          require('./web/ps-eye/ps-eye-nearfield-factory.js');
+          const r=PsEyeNearfieldFactory.selfTest();
+          console.log(JSON.stringify(r,null,2));
+          if(!r.pass) process.exit(1);
+          NODE
 
       - name: Standalone HTTP smoke
         shell: bash
@@ -48,5 +61,6 @@ jobs:
           curl -fsS http://127.0.0.1:18080/ps-eye/ | grep -F "PS Eye 4ch PCM Monitor"
           curl -fsS http://127.0.0.1:18080/ps-eye/dual/ | grep -F "Dual PS Eye 2D Sound Locator"
           curl -fsS http://127.0.0.1:18080/ps-eye/compare/ | grep -F "PS Eye Current / SRP-PHAT Comparison"
+          curl -fsS http://127.0.0.1:18080/ps-eye/nearfield/ | grep -F "Near-field 2D SRP-PHAT + Heatmap"
           curl -fsS http://127.0.0.1:18080/ps-eye/calibrator/ | grep -F "PS Eye Calibration Sound Source"
           echo "STANDALONE_STATIC_OK"

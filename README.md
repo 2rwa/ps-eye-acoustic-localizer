@@ -19,6 +19,7 @@ Sony PlayStation Eye の4chマイクアレイを使い、ブラウザ側で音�
 - `/ps-eye/` — 4ch monitor + Current GCC-PHAT DOA
 - `/ps-eye/dual/` — 2台の方位線を交差させる2D localizer
 - `/ps-eye/compare/` — Current / SRP-PHAT 比較
+- `/ps-eye/nearfield/` — Near-field 2D SRP-PHAT + heatmap
 - `/ps-eye/calibrator/` — スマホ用 chirp / noise burst / sine 校正音源
 
 ## 起動

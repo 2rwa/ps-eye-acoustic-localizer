@@ -1,19 +1,17 @@
 # Next steps
 
-## 1. Near-field 2D SRP-PHAT
+## 1. Near-field 2D SRP-PHAT — implemented
 
-A/Bで先にDOAを1本へ潰さず、XY候補点を直接評価する。
+A内部6 pair + B内部6 pairをXY候補点へ直接融合し、heatmap表示まで実装済み。
+2 cm gridを標準、1 cm gridをheavy modeとして比較できる。
 
-各候補点 `P` について、各array内部pairの理論TDOA:
+次の改善候補:
 
-```text
-tau_ij(P) = (|P-M_i| - |P-M_j|) / c
-```
-
-を計算し、A内部6 pair + B内部6 pairのscoreを融合する。
-
-2 m × 2 mを1 cm gridなら約4万候補点。
-ブラウザ側に余裕がある場合はheatmap表示まで行う。
+- Web Worker化してUI threadから分離
+- multi-resolution scan（4 cm粗探索 → 5 mm局所探索）
+- peak persistence / temporal tracking
+- heatmap history / variance表示
+- known-point calibrationとの自動連携
 
 ## 2. Oversampled GCC / SRP
 
