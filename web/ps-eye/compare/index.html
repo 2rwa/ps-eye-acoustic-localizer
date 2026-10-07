@@ -241,9 +241,17 @@ function resetOneEstimator(which){
   const p=perf[which];p.avg=0;p.lastPkt=0;p.pkt=0;p.slow=0;p.updates=0;p.hz=0;p.hzAt=performance.now();
   smoothPos=null;render();
 }
-function reconnectArray(which){
+async function backendReset(which){
+  const res=await fetch('/api/ps-eye/reset?array='+which.toLowerCase(),{
+    method:'POST',headers:{'X-PS-Eye-Reset':'1'},cache:'no-store'
+  });
+  if(!res.ok)throw new Error('reset HTTP '+res.status);
+  return res.json();
+}
+async function reconnectArray(which){
   clearTimeout(reconnectTimers[which]);reconnectTimers[which]=null;
   resetOneEstimator(which);
+  try{await backendReset(which)}catch(e){$('reconnectState').textContent='backend reset失敗: '+e}
   const q=which.toLowerCase(),old=sockets[which];sockets[which]=null;
   $(q+'Ws').textContent='reset中';$(q+'State').textContent='再初期化中';
   if(old){old.onclose=null;try{old.close(1000,'manual reset')}catch(_){}}
