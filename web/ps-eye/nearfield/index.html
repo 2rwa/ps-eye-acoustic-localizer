@@ -187,7 +187,14 @@ function resetEstimator(which){
   const p=perf[which];p.avg=0;p.lastPkt=0;p.pkt=0;p.updates=0;p.hz=0;p.hzAt=performance.now();
   smooth=null;
 }
-function reconnectArray(which){
+async function backendReset(which){
+  const res=await fetch('/api/ps-eye/reset?array='+which.toLowerCase(),{
+    method:'POST',headers:{'X-PS-Eye-Reset':'1'},cache:'no-store'
+  });
+  if(!res.ok)throw new Error('reset HTTP '+res.status);
+  return res.json();
+}
+async function reconnectArray(which){
   clearTimeout(reconnectTimers[which]);
   reconnectTimers[which]=null;
   resetEstimator(which);
