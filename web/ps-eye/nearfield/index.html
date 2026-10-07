@@ -191,6 +191,7 @@ function reconnectArray(which){
   clearTimeout(reconnectTimers[which]);
   reconnectTimers[which]=null;
   resetEstimator(which);
+  try{await backendReset(which)}catch(e){$('reconnectState').textContent='backend reset失敗: '+e}
   const q=which.toLowerCase(),old=sockets[which];
   sockets[which]=null;
   $(q+'Ws').textContent='reset中';
